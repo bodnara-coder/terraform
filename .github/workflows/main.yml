@@ -46,11 +46,11 @@ jobs:
           sarif_file: results.sarif
           
   terraform:
-    name: 'Terraform Deploy'
+    name: 'Terraform Apply'
     runs-on: ubuntu-latest
     environment: production
     needs: [security_scan] # DEPENDENCY: Only run deploy if the security scan passes
-    if: github.event_name == 'push' and github.ref == 'refs/heads/main' # Only deploy on push to main
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     steps:
       - name: Checkout Repository
