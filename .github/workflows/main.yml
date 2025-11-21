@@ -50,6 +50,24 @@ jobs:
         if: steps.checkov_run.outcome == 'failure'
         run: echo "Checkov found issues, continuing to deployment job with caution."
 
+  # --- NEW JOB: Manual Approval on Failure ---
+  notify_and_approve:
+    name: 'Manual Override & Notify'
+    runs-on: ubuntu-latest
+    
+    # Run only if the previous job failed AND we are pushing to main (deployment event)
+    needs: [security_scan]
+    if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    # 1. Target the protected environment (This triggers the approval gate)
+    environment: 
+      name: production-deploy 
+      
+    steps:
+      # Step 2: The job halts here due to the environment protection rule.
+      - name: Wait for Manual Approval
+        run: echo "Waiting for reviewer approval via GitHub Environment..."
+
   terraform:
     name: 'Terraform Deploy'
     runs-on: ubuntu-latest
