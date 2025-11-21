@@ -1,0 +1,76 @@
+name: 'Terraform GCP Deploy with Checkov Security'
+
+on:
+  push:
+    branches:
+      - main
+  pull_request: # Recommended: Scan on every Pull Request
+    branches:
+      - main
+  workflow_dispatch:
+
+# Define permissions for Workload Identity Federation and security reports
+permissions:
+  contents: 'read'
+  id-token: 'write'       # Required for GCP Auth
+  security-events: 'write' # Required to upload SARIF results to the GitHub Security tab
+
+jobs:
+  security_scan:
+    name: 'Checkov IaC Scan'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------
+      # 1. RUN CHECKOV SCAN (Fail Fast)
+      # -----------------------------------------------
+      - name: Run Checkov Security Scan
+        id: checkov
+        uses: bridgecrewio/checkov-action@v12 # Use the latest stable version
+        with:
+          directory: .
+          framework: terraform
+          # Output results in SARIF format for GitHub Code Scanning
+          output_format: sarif
+          output_file_path: results.sarif
+          # soft_fail: true # Uncomment to allow the pipeline to continue even with failures
+      
+      # -----------------------------------------------
+      # 2. UPLOAD RESULTS TO GITHUB SECURITY TAB
+      # -----------------------------------------------
+      - name: Upload SARIF file
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+          
+  terraform:
+    name: 'Terraform Deploy'
+    runs-on: ubuntu-latest
+    environment: production
+    needs: [security_scan] # DEPENDENCY: Only run deploy if the security scan passes
+    if: github.event_name == 'push' and github.ref == 'refs/heads/main' # Only deploy on push to main
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      # Step 1: Authenticate to GCP using Workload Identity Federation
+      - name: 'Authenticate to Google Cloud'
+        id: 'auth'
+        uses: 'google-github-actions/auth@v2'
+        with:
+          workload_identity_provider: 'projects/150789158686/locations/global/workloadIdentityPools/github-pool/providers/github'
+          service_account: 'github-terraform-sa@plenary-net-320615.iam.gserviceaccount.com'
+
+      # Steps 2 & 3: Terraform Init and Apply
+      - name: Terraform Init
+        id: init
+        run: terraform init
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -var-file="terraform.tfvars"
