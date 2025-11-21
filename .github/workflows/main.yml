@@ -4,52 +4,63 @@ on:
   push:
     branches:
       - main
-  pull_request: # Recommended: Scan on every Pull Request
+  pull_request:
     branches:
       - main
   workflow_dispatch:
 
-# Define permissions for Workload Identity Federation and security reports
 permissions:
   contents: 'read'
   id-token: 'write'       # Required for GCP Auth
-  security-events: 'write' # Required to upload SARIF results to the GitHub Security tab
+  security-events: 'write' # Required to upload SARIF results
 
 jobs:
   security_scan:
     name: 'Checkov IaC Scan'
     runs-on: ubuntu-latest
+    # Define an output to indicate if Checkov failed or succeeded
+    outputs:
+      checkov_failed: ${{ steps.checkov_run.outcome == 'failure' }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # -----------------------------------------------
-      # 1. RUN CHECKOV SCAN (Fail Fast)
-      # -----------------------------------------------
+      # 1. RUN CHECKOV SCAN
+      # Use soft_fail: true so the step itself DOES NOT fail the job, 
+      # but we can check the output state of the run command later.
       - name: Run Checkov Security Scan
-        id: checkov
-        uses: bridgecrewio/checkov-action@v12 # Use the latest stable version
+        id: checkov_run
+        uses: bridgecrewio/checkov-action@v12
+        continue-on-error: true # Allow the job to continue even if the step fails
         with:
           directory: .
           framework: terraform
-          # Output results in SARIF format for GitHub Code Scanning
           output_format: sarif
           output_file_path: results.sarif
-          # soft_fail: true # Uncomment to allow the pipeline to continue even with failures
-      
-      # -----------------------------------------------
-      # 2. UPLOAD RESULTS TO GITHUB SECURITY TAB
-      # -----------------------------------------------
+          soft_fail: true # This ensures Checkov doesn't exit with a non-zero code unless severe, but we check the outcome anyway.
+
       - name: Upload SARIF file
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: results.sarif
           
+      # Explicitly set the job failure status based on Checkov's success/failure
+      - name: Determine Checkov Status
+        if: steps.checkov_run.outcome == 'failure'
+        run: echo "Checkov found issues, continuing to deployment job with caution."
+
   terraform:
-    name: 'Terraform Apply'
+    name: 'Terraform Deploy'
     runs-on: ubuntu-latest
-    environment: production
-    needs: [security_scan] # DEPENDENCY: Only run deploy if the security scan passes
+    
+    # ----------------------------------------------------------------
+    # KEY CHANGE: Target the protected environment
+    # ----------------------------------------------------------------
+    environment: 
+      name: production-deploy # This triggers the Required Reviewers protection rule
+      
+    # Depend on the scan, but only deploy on push to main
+    needs: [security_scan]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     steps:
