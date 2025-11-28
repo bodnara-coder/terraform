@@ -16,7 +16,6 @@ permissions:
   actions: 'read'
 
 jobs:
-
   terraform:
     name: 'Terraform Deploy'
     runs-on: ubuntu-latest
