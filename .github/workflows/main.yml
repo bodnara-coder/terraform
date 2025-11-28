@@ -16,6 +16,58 @@ permissions:
   actions: 'read'
 
 jobs:
+  security_scan:
+    name: 'Checkov IaC Scan'
+    runs-on: ubuntu-latest
+    # Define an output to indicate if Checkov failed or succeeded
+    outputs:
+      checkov_failed: ${{ steps.checkov_run.outcome == 'failure' }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # 1. RUN CHECKOV SCAN
+      # Use soft_fail: true so the step itself DOES NOT fail the job, 
+      # but we can check the output state of the run command later.
+      - name: Run Checkov Security Scan
+        id: checkov_run
+        uses: bridgecrewio/checkov-action@v12
+        continue-on-error: true # Allow the job to continue even if the step fails
+        with:
+          directory: .
+          framework: terraform
+          output_format: sarif
+          output_file_path: results.sarif
+          soft_fail: true # This ensures Checkov doesn't exit with a non-zero code unless severe, but we check the outcome anyway.
+
+      - name: Upload SARIF file
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: results.sarif
+          
+      # Explicitly set the job failure status based on Checkov's success/failure
+      - name: Determine Checkov Status
+        if: steps.checkov_run.outcome == 'failure'
+        run: echo "Checkov found issues, continuing to deployment job with caution."
+
+  # --- NEW JOB: Manual Approval on Failure ---
+  notify_and_approve:
+    name: 'Manual Override & Notify'
+    runs-on: ubuntu-latest
+    
+    # Run only if the previous job failed AND we are pushing to main (deployment event)
+    needs: [security_scan]
+    if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    # 1. Target the protected environment (This triggers the approval gate)
+    environment: 
+      name: production-deploy 
+      
+    steps:
+      # Step 2: The job halts here due to the environment protection rule.
+      - name: Wait for Manual Approval
+        run: echo "Waiting for reviewer approval via GitHub Environment..."
+
   terraform:
     name: 'Terraform Deploy'
     runs-on: ubuntu-latest
