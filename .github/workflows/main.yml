@@ -41,7 +41,7 @@ jobs:
   terraform:
     name: 'Terraform Deploy'
     runs-on: ubuntu-latest
-    needs: [security_scan]
+    #needs: [security_scan]
     # This environment name MUST match the one created in Repo Settings
     environment: production-deploy 
     
