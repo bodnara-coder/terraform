@@ -24,7 +24,7 @@ jobs:
       checkov_failed: ${{ steps.checkov_run.outcome == 'failure' }}
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # 1. RUN CHECKOV SCAN
       # Use soft_fail: true so the step itself DOES NOT fail the job, 
@@ -84,7 +84,7 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
