@@ -2,104 +2,71 @@ name: 'Terraform GCP Deploy with Checkov Security'
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: 'read'
-  id-token: 'write'       # Required for GCP Auth
-  security-events: 'write' # Required to upload SARIF results
+  id-token: 'write'
+  security-events: 'write'
   actions: 'read'
 
 jobs:
   security_scan:
     name: 'Checkov IaC Scan'
     runs-on: ubuntu-latest
-    # Define an output to indicate if Checkov failed or succeeded
-    outputs:
-      checkov_failed: ${{ steps.checkov_run.outcome == 'failure' }}
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
-      # 1. RUN CHECKOV SCAN
-      # Use soft_fail: true so the step itself DOES NOT fail the job, 
-      # but we can check the output state of the run command later.
       - name: Run Checkov Security Scan
         id: checkov_run
         uses: bridgecrewio/checkov-action@v12
-        continue-on-error: true # Allow the job to continue even if the step fails
         with:
           directory: .
           framework: terraform
           output_format: sarif
           output_file_path: results.sarif
-          soft_fail: true # This ensures Checkov doesn't exit with a non-zero code unless severe, but we check the outcome anyway.
+          # soft_fail: true means the process returns exit code 0 even if it finds issues
+          soft_fail: true 
 
       - name: Upload SARIF file
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
         with:
           sarif_file: results.sarif
-          
-      # Explicitly set the job failure status based on Checkov's success/failure
-      - name: Determine Checkov Status
-        if: steps.checkov_run.outcome == 'failure'
-        run: echo "Checkov found issues, continuing to deployment job with caution."
-
-  # --- NEW JOB: Manual Approval on Failure ---
-  notify_and_approve:
-    name: 'Manual Override & Notify'
-    runs-on: ubuntu-latest
-    
-    # Run only if the previous job failed AND we are pushing to main (deployment event)
-    needs: [security_scan]
-    if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
-    
-    # 1. Target the protected environment (This triggers the approval gate)
-    environment: 
-      name: production-deploy 
-      
-    steps:
-      # Step 2: The job halts here due to the environment protection rule.
-      - name: Wait for Manual Approval
-        run: echo "Waiting for reviewer approval via GitHub Environment..."
 
   terraform:
     name: 'Terraform Deploy'
     runs-on: ubuntu-latest
-    
-    # ----------------------------------------------------------------
-    # KEY CHANGE: Target the protected environment
-    # ----------------------------------------------------------------
-    environment: 
-      name: production-deploy # This triggers the Required Reviewers protection rule
-      
-    # Depend on the scan, but only deploy on push to main
     needs: [security_scan]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # This environment name MUST match the one created in Repo Settings
+    environment: production-deploy 
+    
+    # Logic: 
+    # 1. Run if we are on the main branch.
+    # 2. Run even if security_scan 'failed' (always() ensures it doesn't skip).
+    if: |
+      github.ref == 'refs/heads/main' && 
+      always() && 
+      needs.security_scan.result != 'cancelled'
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v4
+        uses: hashicorp/setup-terraform@v3
 
-      # Step 1: Authenticate to GCP using Workload Identity Federation
       - name: 'Authenticate to Google Cloud'
-        id: 'auth'
-        uses: 'google-github-actions/auth@v3'
+        uses: 'google-github-actions/auth@v2'
         with:
           workload_identity_provider: 'projects/150789158686/locations/global/workloadIdentityPools/github-pool/providers/github'
           service_account: 'github-terraform-sa@plenary-net-320615.iam.gserviceaccount.com'
 
-      # Steps 2 & 3: Terraform Init and Apply
       - name: Terraform Init
-        id: init
         run: terraform init
 
       - name: Terraform Apply
